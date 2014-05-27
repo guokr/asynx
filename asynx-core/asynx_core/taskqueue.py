@@ -14,6 +14,27 @@ _dumps = anyjson.dumps
 _loads = anyjson.loads
 _interrupt = (KeyboardInterrupt, SystemExit)
 
+try:
+    dict_items = dict.iteritems
+except AttributeError:
+    # python 3
+    dict_items = dict.items
+
+try:
+    get_total_seconds = timedelta.total_seconds
+except AttributeError:
+    # python 2.6
+    get_total_seconds = lambda d: (d.microseconds +
+                                   (d.seconds + d.days * 86400) *
+                                   1e6) / 1e6
+
+
+def not_bytes(s):
+    # python3's json accept str instead of bytes
+    if type(s).__name__ == 'bytes':
+        s = s.decode('UTF-8')
+    return s
+
 
 class TaskAlreadyExists(Exception):
     pass
@@ -158,7 +179,7 @@ class TaskQueue(object):
             'uuid': task.uuid,
             'status': task.status
         }
-        for key, val in update_fields.iteritems():
+        for key, val in dict_items(update_fields):
             update_fields[key] = _dumps(val)
         metakey = self.__metakey(task.id)
         with self.redis.pipeline() as pipe:
@@ -381,7 +402,8 @@ class TaskQueue(object):
                        *ensure_previous):
 
         def __update_status(pipe):
-            previous = _loads(pipe.hget(metakey, 'status'))
+            previous = not_bytes(pipe.hget(metakey, 'status'))
+            previous = _loads(previous)
             if previous not in (ensure_previous):
                 raise TaskStatusNotMatched(
                     'status of task "{0}" is not matched'.format(task_id))
@@ -395,7 +417,7 @@ class TaskQueue(object):
 class Task(object):
 
     __slots__ = ('request', 'id', 'uuid', 'cname',
-                 'countdown', 'eta', 'status', 'on_success',
+                 'eta', 'status', 'on_success',
                  'on_failure', 'on_complete', '_taskqueue')
 
     def __init__(self, request, id=None,
@@ -433,7 +455,7 @@ class Task(object):
     def countdown(self):
         if self.eta:
             delta = self.eta - datetime.now()
-            return delta.total_seconds()
+            return get_total_seconds(delta)
 
     @countdown.setter
     def countdown(self, val):
@@ -552,21 +574,23 @@ class Task(object):
         # don't store relative countdown in redis
         task.pop('countdown')
         task['eta'] = self.eta_timestamp
-        for key, val in task.iteritems():
+        for key, val in dict_items(task):
             task[key] = _dumps(val)
         return task_id, task
 
     @classmethod
     def from_dict(cls, task_dict):
         task_dict = dict([
-            (key, val) for key, val in task_dict.iteritems()
+            (key, val) for key, val in dict_items(task_dict)
             if key in cls.__init_args])
         return Task(**task_dict)
 
     @classmethod
     def _from_redis(cls, task_id, task_dict):
-        for key, val in task_dict.iteritems():
-            task_dict[key] = _loads(val)
+        task_dict_tmp = {}
+        for key, val in dict_items(task_dict):
+            task_dict_tmp[not_bytes(key)] = _loads(not_bytes(val))
+        task_dict = task_dict_tmp
         task_dict['id'] = task_id
         if task_dict['eta'] is not None:
             task_dict['eta'] = datetime.fromtimestamp(task_dict['eta'])

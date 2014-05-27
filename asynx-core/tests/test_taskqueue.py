@@ -10,7 +10,8 @@ from celery import Celery
 from asynx_core.taskqueue import (TaskQueue, Task,
                                   TaskNotFound,
                                   TaskStatusNotMatched,
-                                  TaskAlreadyExists)
+                                  TaskAlreadyExists,
+                                  not_bytes)
 
 
 class TaskQueueTestCase(TestCase):
@@ -40,12 +41,12 @@ class TaskQueueTestCase(TestCase):
                              'cname', 'on_complete', 'on_failure',
                              'on_success', 'uuid')
         self.assertEqual(r[0:-1], [
-            '"enqueued"', '"Task"',
-            '{"url": "http://httpbin.org", "method": "GET"}',
-            'null', 'null', '"__report__"', '"__delete__"'])
-        clobj = anyjson.loads(self.conn0.lindex('celery', 0))
+            b'"enqueued"', b'"Task"',
+            b'{"url": "http://httpbin.org", "method": "GET"}',
+            b'null', b'null', b'"__report__"', b'"__delete__"'])
+        clobj = anyjson.loads(not_bytes(self.conn0.lindex('celery', 0)))
         self.assertEqual(clobj['properties']['correlation_id'],
-                         anyjson.loads(r[-1]))
+                         anyjson.loads(not_bytes(r[-1])))
         task = Task({'method': 'GET',
                      'url': 'http://httpbin.org'},
                     2, countdown=10)
@@ -53,7 +54,7 @@ class TaskQueueTestCase(TestCase):
         metakey = tq._TaskQueue__metakey(idx)
         self.assertTrue(self.conn1.hmset(metakey, task_dict))
         tq._dispatch_task(task)
-        self.assertEqual(self.conn1.hget(metakey, 'status'), '"delayed"')
+        self.assertEqual(self.conn1.hget(metakey, 'status'), b'"delayed"')
 
     def test_add_task(self):
         tq = TaskQueue('test')
@@ -74,7 +75,7 @@ class TaskQueueTestCase(TestCase):
     def test_iter_tasks(self):
         tq = TaskQueue('test')
         tq.bind_redis(self.conn1)
-        for i in xrange(51):
+        for i in range(51):
             tq.add_task(
                 {'method': 'GET',
                  'url': 'http://httpbin.org/get'},
@@ -85,7 +86,7 @@ class TaskQueueTestCase(TestCase):
                  'payload': 'test'},
                 cname='task{0}'.format(2 * i + 1))
         offset93 = tq.iter_tasks(93)
-        task93 = offset93.next()
+        task93 = next(offset93)
         self.assertEqual(task93['cname'], 'task93')
         j = 0
         for task in tq.iter_tasks(per_pipeline=17):
@@ -101,13 +102,13 @@ class TaskQueueTestCase(TestCase):
         tq = self.test_iter_tasks()
         tasks = tq.list_tasks(17, 83)
         self.assertEqual(len(tasks), 83)
-        for i, task in zip(xrange(17, 100), tasks):
+        for i, task in zip(range(17, 100), tasks):
             self.assertEqual(task['cname'], 'task{0}'.format(i))
 
     def test_get_task(self):
         tq = TaskQueue('test')
         tq.bind_redis(self.conn1)
-        for i in xrange(5):
+        for i in range(5):
             tq.add_task({'method': 'GET',
                          'url': 'http://httpbin.org'})
         task = tq.get_task(5)
@@ -119,7 +120,7 @@ class TaskQueueTestCase(TestCase):
     def test_get_task_by_uuid(self):
         tq = TaskQueue('test')
         tq.bind_redis(self.conn1)
-        for i in xrange(5):
+        for i in range(5):
             task = tq.add_task({'method': 'GET',
                                 'url': 'http://httpbin.org'})
         task = tq.get_task_by_uuid(task['uuid'])
@@ -152,7 +153,7 @@ class TaskQueueTestCase(TestCase):
         self.assertFalse(conn1.exists(tq._TaskQueue__metakey(1)))
         self.assertFalse(conn1.exists(tq._TaskQueue__cnamekey('deletetask')))
         self.assertFalse(conn1.exists(tq._TaskQueue__uuidkey()))
-        self.assertEqual(conn1.hget(*tq._TaskQueue__hincrkey()), '1')
+        self.assertEqual(conn1.hget(*tq._TaskQueue__hincrkey()), b'1')
 
     def test_delete_task_by_uuid(self):
         conn1 = self.conn1
