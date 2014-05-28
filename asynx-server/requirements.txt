@@ -1,0 +1,6 @@
+asynx_core>=0.4dev
+daemonize>=2.3
+flask>=0.10.1
+Flask-And-Redis>=0.5
+simplejson>=3.5.2
+voluptuous>=0.8.5

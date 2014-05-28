@@ -37,13 +37,12 @@ class TaskQueueTestCase(TestCase):
         metakey = tq._TaskQueue__metakey(idx)
         self.assertTrue(self.conn1.hmset(metakey, task_dict))
         tq._dispatch_task(task)
-        r = self.conn1.hmget(metakey, 'status', 'kind', 'request',
+        r = self.conn1.hmget(metakey, 'status', 'request',
                              'cname', 'on_complete', 'on_failure',
                              'on_success', 'uuid')
-        self.assertEqual(r[0:2] + r[3:-1], [
-            b'"enqueued"', b'"Task"',
-            b'null', b'null', b'"__report__"', b'"__delete__"'])
-        self.assertEqual(anyjson.loads(not_bytes(r[2])),
+        self.assertEqual(r[0:1] + r[2:-1], [b'"enqueued"', b'null', b'null',
+                                            b'"__report__"', b'null'])
+        self.assertEqual(anyjson.loads(not_bytes(r[1])),
                          {"url": "http://httpbin.org", "method": "GET"})
         clobj = anyjson.loads(not_bytes(self.conn0.lindex('celery', 0)))
         self.assertEqual(clobj['properties']['correlation_id'],
@@ -86,6 +85,7 @@ class TaskQueueTestCase(TestCase):
                  'url': 'http://httpbin.org/post',
                  'payload': 'test'},
                 cname='task{0}'.format(2 * i + 1))
+        self.assertEqual(tq.count_tasks(), 102)
         offset93 = tq.iter_tasks(93)
         task93 = next(offset93)
         self.assertEqual(task93['cname'], 'task93')

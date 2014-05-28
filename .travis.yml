@@ -5,8 +5,8 @@ python:
   - "3.2"
   - "3.3"
 install:
-  - pip install -r asynx-core/requirements.txt
+  - ./test-install.sh
 script:
-  - nosetests --with-doctest asynx-core
+  - ./test-script.sh
 services:
   - redis-server

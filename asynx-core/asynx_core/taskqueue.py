@@ -25,10 +25,6 @@ class TaskStatusNotMatched(Exception):
     pass
 
 
-class TaskNotChanged(Exception):
-    pass
-
-
 @celery.shared_task()
 def request_task(appname, queuename, task_id):
     """Dispatch an HTTP request task."""
@@ -166,7 +162,7 @@ class TaskQueue(object):
 
     def add_task(self, request, cname=None,
                  countdown=None, eta=None,
-                 on_success='__delete__',
+                 on_success=None,
                  on_failure='__report__',
                  on_complete=None):
         """adding and dispatch task
@@ -248,6 +244,16 @@ class TaskQueue(object):
             if len(result) < per_pipeline:
                 break
             offset += per_pipeline
+
+    def count_tasks(self):
+        """counting tasks
+
+        Returns:
+            integer, count of all tasks in the queue
+
+        """
+        uuidkey = self.__uuidkey()
+        return self.redis.zcard(uuidkey)
 
     def list_tasks(self, offset=0, limit=50):
         """listing tasks with offset and limit
@@ -410,7 +416,7 @@ class Task(object):
 
     def __init__(self, request, id=None,
                  uuid=None, cname=None, countdown=None,
-                 eta=None, status='new', on_success='__delete__',
+                 eta=None, status='new', on_success=None,
                  on_failure='__report__', on_complete=None):
         self.id = id
         self.request = request
@@ -544,7 +550,6 @@ class Task(object):
 
     def to_dict(self):
         return {
-            'kind': 'Task',
             'request': self.request,
             'id': self.id,
             'uuid': self.uuid,
