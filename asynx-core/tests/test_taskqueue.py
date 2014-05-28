@@ -10,8 +10,8 @@ from celery import Celery
 from asynx_core.taskqueue import (TaskQueue, Task,
                                   TaskNotFound,
                                   TaskStatusNotMatched,
-                                  TaskAlreadyExists,
-                                  not_bytes)
+                                  TaskAlreadyExists)
+from asynx_core._util import user_agent, not_bytes
 
 
 class TaskQueueTestCase(TestCase):
@@ -40,10 +40,11 @@ class TaskQueueTestCase(TestCase):
         r = self.conn1.hmget(metakey, 'status', 'kind', 'request',
                              'cname', 'on_complete', 'on_failure',
                              'on_success', 'uuid')
-        self.assertEqual(r[0:-1], [
+        self.assertEqual(r[0:2] + r[3:-1], [
             b'"enqueued"', b'"Task"',
-            b'{"url": "http://httpbin.org", "method": "GET"}',
             b'null', b'null', b'"__report__"', b'"__delete__"'])
+        self.assertEqual(anyjson.loads(not_bytes(r[2])),
+                         {"url": "http://httpbin.org", "method": "GET"})
         clobj = anyjson.loads(not_bytes(self.conn0.lindex('celery', 0)))
         self.assertEqual(clobj['properties']['correlation_id'],
                          anyjson.loads(not_bytes(r[-1])))
@@ -191,3 +192,55 @@ class TaskQueueTestCase(TestCase):
             TaskStatusNotMatched,
             tq._update_status,
             1, 'running', 'enqueued', 'delayed')
+
+    def test_task_dispatch(self):
+        conn1 = self.conn1
+        tq = TaskQueue('test')
+        tq.bind_redis(conn1)
+        tq.add_task({'method': 'POST',
+                     'url': 'http://httpbin.org/post',
+                     'payload': '{"a":"b"}',
+                     'timeout': 30},
+                    cname='thistask', countdown=42)
+        task = tq._get_task(1)
+        resp = task._dispatch(**task.request)
+        r = resp.json()
+        self.assertEqual(r['headers']['X-Asynx-Taskuuid'], task.uuid)
+        self.assertEqual(r['headers']['X-Asynx-Taskcname'], 'thistask')
+        self.assertEqual(r['headers']['User-Agent'], user_agent())
+        self.assertEqual(r['data'], '{"a":"b"}')
+        self.assertTrue('X-Asynx-Tasketa' in r['headers'])
+        task.dispatch()
+        self.assertFalse(conn1.exists(tq._TaskQueue__metakey(1)))
+        self.assertFalse(conn1.exists(tq._TaskQueue__cnamekey('deletetask')))
+        self.assertFalse(conn1.exists(tq._TaskQueue__uuidkey()))
+
+    def test_task_callback(self):
+        conn1 = self.conn1
+        tq = TaskQueue('test')
+        tq.bind_redis(conn1)
+        tq.add_task({'method': 'POST',
+                     'url': 'http://httpbin.org/post',
+                     'payload': '{"a":"b"}',
+                     'timeout': 30},
+                    cname='thistask', countdown=42,
+                    on_success='http://httpbin.org/post')
+        task = tq._get_task(1)
+        resp = task._dispatch(**task.request)
+        subtask = task._dispatch_callback(task.on_success, resp)
+        self.assertEqual(subtask['id'], 2)
+        subtask = tq._get_task(2)
+        resp = subtask._dispatch(**subtask.request)
+        r = resp.json()
+        self.assertEqual(r['headers']['X-Asynx-Chained'],
+                         'http://httpbin.org/post')
+        self.assertEqual(r['headers']['X-Asynx-Chained-Taskcname'],
+                         'thistask')
+        self.assertTrue('X-Asynx-Chained-Tasketa' in r['headers'])
+        payload = r['json']
+        pr = anyjson.loads(not_bytes(payload['content']))
+        self.assertEqual(pr['headers']['X-Asynx-Taskuuid'], task.uuid)
+        self.assertEqual(pr['headers']['X-Asynx-Taskcname'], 'thistask')
+        self.assertEqual(pr['headers']['User-Agent'], user_agent())
+        self.assertEqual(pr['data'], '{"a":"b"}')
+        self.assertTrue('X-Asynx-Tasketa' in pr['headers'])

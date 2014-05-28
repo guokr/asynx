@@ -6,34 +6,11 @@ from itertools import islice
 from datetime import datetime, timedelta
 
 import celery
-import anyjson
 import requests
 from redis import WatchError
 
-_dumps = anyjson.dumps
-_loads = anyjson.loads
-_interrupt = (KeyboardInterrupt, SystemExit)
-
-try:
-    dict_items = dict.iteritems
-except AttributeError:
-    # python 3
-    dict_items = dict.items
-
-try:
-    get_total_seconds = timedelta.total_seconds
-except AttributeError:
-    # python 2.6
-    get_total_seconds = lambda d: (d.microseconds +
-                                   (d.seconds + d.days * 86400) *
-                                   1e6) / 1e6
-
-
-def not_bytes(s):
-    # python3's json accept str instead of bytes
-    if type(s).__name__ == 'bytes':
-        s = s.decode('UTF-8')
-    return s
+from ._util import (_dumps, _loads, dict_items, basestring,
+                    get_total_seconds, not_bytes, user_agent)
 
 
 class TaskAlreadyExists(Exception):
@@ -187,7 +164,11 @@ class TaskQueue(object):
             pipe.zadd(uuidkey, task.id, task.uuid)
             pipe.execute()
 
-    def add_task(self, request, cname=None, countdown=None, eta=None):
+    def add_task(self, request, cname=None,
+                 countdown=None, eta=None,
+                 on_success='__delete__',
+                 on_failure='__report__',
+                 on_complete=None):
         """adding and dispatch task
 
         Parameters:
@@ -197,13 +178,20 @@ class TaskQueue(object):
             - cname: string, custom task name
             - countdown: int/float in seconds
             - eta: datatime object
+            - on_success: callback when success, can be None,
+                          a url, an internal method or subtask dict
+            - on_failure: callback when failure
+            - on_complete: callback when complete
 
         Returns:
             task dict
 
         """
         task = Task(request=request, cname=cname,
-                    countdown=countdown, eta=eta)
+                    countdown=countdown, eta=eta,
+                    on_success=on_success,
+                    on_failure=on_failure,
+                    on_complete=on_complete)
         incrkey, incrhash = self.__hincrkey()
         task.id = idx = self.redis.hincrby(incrkey, incrhash)
         metakey = self.__metakey(idx)
@@ -351,9 +339,6 @@ class TaskQueue(object):
         Do not use this method directly, use delete_task instead
 
         """
-        if task.status == 'running':
-            raise TaskStatusNotMatched('task "{0}" can not be deleted '
-                                       'because it is running'.format(task.id))
         metakey = self.__metakey(task.id)
         uuidkey = self.__uuidkey()
         cnamekey = None
@@ -376,6 +361,9 @@ class TaskQueue(object):
 
         """
         task = self._get_task(task_id)
+        if task.status == 'running':
+            raise TaskStatusNotMatched('task "{0}" can not be deleted '
+                                       'because it is running'.format(task.id))
         self._delete_task(task)
 
     def delete_task_by_uuid(self, uuid):
@@ -472,23 +460,29 @@ class Task(object):
 
     @classmethod
     def _wrap_response(cls, response):
-        return {
+        return _dumps({
             'url': response.url,
             'status_code': response.status_code,
             'headers': dict(response.headers),
-            'content': response.content,
+            'content': not_bytes(response.content),
             'history': [cls._wrap_response(r) for r in response.history],
             'reason': response.reason
-        }
+        })
 
     def _report_response(self, response):
-        raise NotImplementedError
+        pass
 
     def _dispatch_callback(self, method, response):
         if method == '__report__':
             return self._report_response(response)
 
         payload = self._wrap_response(response)
+        if isinstance(method, basestring) and \
+                method.lower().startswith('http'):
+            method = {
+                'request': {'method': 'POST',
+                            'url': method}
+            }
         if isinstance(method, dict):
             # chained task
             kwargs = copy.deepcopy(method)
@@ -497,21 +491,14 @@ class Task(object):
             kwargs['request']['headers'].update({
                 'X-Asynx-Chained': self.request['url'],
                 'X-Asynx-Chained-TaskUUID': self.uuid,
-                'X-Asynx-Chained-TaskETA': self.eta_timestamp
+                'X-Asynx-Chained-TaskETA': str(self.eta_timestamp)
             })
             if self.cname:
                 kwargs['request']['headers'].update({
                     'X-Asynx-Chained-taskCName': self.cname
                 })
             kwargs['request']['payload'] = payload
-            self.taskqueue.add_task(**kwargs)
-        elif isinstance(method, basestring) and method.startswith('http'):
-            # chained request
-            self._dispatch('POST', method,
-                           payload=payload,
-                           headers={
-                               'X-Asynx-Callback': self.request['url']
-                           })
+            return self.taskqueue.add_task(**kwargs)
 
     def dispatch(self):
         self.taskqueue._update_status(self.id, 'running',
@@ -548,8 +535,9 @@ class Task(object):
         headers.update({
             'X-Asynx-QueueName': self.taskqueue.queuename,
             'X-Asynx-TaskUUID': self.uuid,
-            'X-Asynx-TaskETA': self.eta_timestamp,
+            'X-Asynx-TaskETA': str(self.eta_timestamp),
         })
+        headers.setdefault('User-Agent', user_agent())
         if self.cname:
             headers['X-Asynx-TaskCName'] = self.cname
         return requests.request(method, url, **options)
