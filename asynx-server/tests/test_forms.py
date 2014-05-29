@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 
-import time
 from unittest import TestCase
 from asynx_server import forms
 from voluptuous import MultipleInvalid
@@ -52,6 +51,6 @@ class FormsTestCase(TestCase):
         data['request']['headers'] = {123: '321'}
         self.assertRaises(MultipleInvalid, _form, data)
 
-        data['request']['headers'] = {'X-Test': 321}
+        data['request']['headers'] = {'X-Test': '321'}
         expect['request']['headers'] = {'X-Test': '321'}
         self.assertEqual(_form(data), expect)

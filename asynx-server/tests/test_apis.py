@@ -18,6 +18,10 @@ class ApisTestCase(TestCase):
         self.celery = Celery(broker='redis://localhost/1')
         self.app = apis.app
         self.client = self.app.test_client()
+        self.app.config.update({
+            'DEBUG': True,
+            'TESTING': True
+        })
 
     def tearDown(self):
         self.conn1.delete('celery')
@@ -81,3 +85,60 @@ class ApisTestCase(TestCase):
         self.assertEqual(task['cname'], 'testtask1')
         self.assertEqual(task['eta'], None)
         self.assertEqual(task['countdown'], None)
+
+    def test_get_task(self):
+        with self.app.app_context():
+            tq = apis.TaskQueue('test')
+            task = tq.add_task({'method': 'GET',
+                                'url': 'http://httpbin.org/get'},
+                               cname='testtask')
+        rv = self.client.get('/app/test/taskqueues/default/tasks/1')
+        self.assertEqual(rv.status_code, 200)
+        task_by_id_implicit = anyjson.loads(rv.data)
+        rv = self.client.get('/app/test/taskqueues/default/tasks/id:1')
+        self.assertEqual(rv.status_code, 200)
+        task_by_id = anyjson.loads(rv.data)
+        rv = self.client.get(
+            '/app/test/taskqueues/default/tasks/uuid:{0}'.format(task['uuid']))
+        self.assertEqual(rv.status_code, 200)
+        task_by_uuid = anyjson.loads(rv.data)
+        rv = self.client.get(
+            '/app/test/taskqueues/default/tasks/cname:testtask')
+        self.assertEqual(rv.status_code, 200)
+        task_by_cname = anyjson.loads(rv.data)
+        self.assertTrue(task == task_by_id_implicit == task_by_id ==
+                        task_by_uuid == task_by_cname)
+        rv = self.client.get('/app/test/taskqueues/default/tasks/uuid:1')
+        self.assertEqual(rv.status_code, 400)
+        rv = self.client.get(
+            '/app/test/taskqueues/default/tasks/{0}'.format(task['uuid']))
+        self.assertEqual(rv.status_code, 400)
+        rv = self.client.get('/app/test/taskqueues/default/tasks/testtask')
+        self.assertEqual(rv.status_code, 400)
+        rv = self.client.get(
+            '/app/test/taskqueues/default/tasks/{0}'.format(2 ** 63 - 1))
+        self.assertEqual(rv.status_code, 404)
+        rv = self.client.get(
+            '/app/test/taskqueues/default/tasks/{0}'.format(2 ** 63))
+        self.assertEqual(rv.status_code, 400)
+        rv = self.client.get('/app/test/taskqueues/default/tasks/cname:aaa')
+        self.assertEqual(rv.status_code, 404)
+        rv = self.client.get('/app/test/taskqueues/default/tasks/cname:aa')
+        self.assertEqual(rv.status_code, 400)
+        rv = self.client.get(
+            '/app/test/taskqueues/default/tasks/cname:' + ('a' * 96))
+        self.assertEqual(rv.status_code, 404)
+        rv = self.client.get(
+            '/app/test/taskqueues/default/tasks/cname:' + ('a' * 97))
+        self.assertEqual(rv.status_code, 400)
+
+    def test_delete_task(self):
+        with self.app.app_context():
+            tq = apis.TaskQueue('test')
+            task = tq.add_task({'method': 'GET',
+                                'url': 'http://httpbin.org/get'},
+                               cname='testtask')
+        rv = self.client.delete(
+            '/app/test/taskqueues/default/tasks/uuid:{0}'.format(task['uuid']))
+        self.assertEqual(rv.status_code, 200)
+        self.assertEqual(tq.count_tasks(), 0)

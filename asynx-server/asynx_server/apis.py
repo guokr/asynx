@@ -65,10 +65,10 @@ def task_already_exists_handler(e):
     return _error_handler(207203, str(e))
 
 
-def validate(schema, data=None):
+def validate(schema, data=None, datatype=None):
     if data is None:
         data = request.data
-    if isinstance(data, basestring):
+    if datatype == 'json':
         try:
             data = anyjson.loads(data)
         except ValueError as e:
@@ -84,6 +84,10 @@ def list_tasks(appname, taskqueue):
 
     Request
     -------
+
+    ```
+    GET http://asynx.host/app/:appname/taskqueues/:taskqueue/tasks
+    ```
 
     Parameters:
         - appname:   url param, string, the application name
@@ -127,10 +131,14 @@ def list_tasks(appname, taskqueue):
 
 @app.route('/app/<appname>/taskqueues/<taskqueue>/tasks', methods=['POST'])
 def insert_tasks(appname, taskqueue):
-    """Insert a task into an taskqueue
+    """Inserts a task into an taskqueue
 
     Request
     -------
+
+    ```
+    POST http://asynx.host/app/:appname/taskqueues/:taskqueue/tasks
+    ```
 
     Parameters:
         - appname:   url param, string, the application name
@@ -171,6 +179,7 @@ def insert_tasks(appname, taskqueue):
             - allow_redirects: boolean, set to True if POST/PUT/DELETE
                                redirect following is allowed
         - cname:      string & optional, custom name for the task
+                      min: 3 chars, max: 96 chars
         - countdown:  float, time interval to trigger the task, in seconds
         - eta:        float, the UTC unix timestamp to trigger the task,
                       can not be used with countdown
@@ -215,6 +224,93 @@ def insert_tasks(appname, taskqueue):
         "delayed", enqueued but will not be triggered until eta
 
     """
-    task_dict = validate(forms.add_task_form)
+    task_dict = validate(forms.add_task_form, datatype='json')
     tq = TaskQueue(appname, taskqueue)
     return jsonify(tq.add_task(**task_dict)), 201
+
+
+@app.route('/app/<appname>/taskqueues/<taskqueue>/tasks/<identifier>',
+           methods=['GET'])
+def get_task(appname, taskqueue, identifier):
+    """Gets identified task in a taskqueue
+
+    Request
+    -------
+
+    ```
+    GET http://asynx.host/app/:appname/taskqueues/:taskqueue/tasks/:identifier
+    ```
+
+    Parameters:
+        - appname:    url param, string, the application name
+                      under which the queue lies
+        - taskqueue:  url param, string, the name of the taskqueue
+                      in which the task belongs
+        - identifier: url param, string, the identifier to the task.
+                      the identifier can be:
+                        - id, form: {integer} or id:{integer};
+                        - uuid, form: uuid:{string}
+                        - cname, form: cname:{string}
+
+    Request body:
+        Do not supply a request body with this method
+
+    Response
+    --------
+
+    Task resource same as `insert_tasks`.
+
+    """
+    kind, kind_id = validate(forms.identifier_form, identifier)
+    tq = TaskQueue(appname, taskqueue)
+    if kind == 'id':
+        task = tq.get_task(kind_id)
+    elif kind == 'uuid':
+        task = tq.get_task_by_uuid(kind_id)
+    elif kind == 'cname':
+        task = tq.get_task_by_cname(kind_id)
+    return jsonify(task)
+
+
+@app.route('/app/<appname>/taskqueues/<taskqueue>/tasks/<identifier>',
+           methods=['DELETE'])
+def delete_task(appname, taskqueue, identifier):
+    """Deletes a task from a taskqueue
+
+    Request
+    -------
+
+    ```
+    DELETE \
+        http://asynx.host/app/:appname/taskqueues/:taskqueue/tasks/:identifier
+    ```
+
+    Parameters:
+        - appname:    url param, string, the application name
+                      under which the queue lies
+        - taskqueue:  url param, string, the name of the taskqueue
+                      to delete a task from
+        - identifier: url param, string, the identifier to the task.
+                      the identifier can be:
+                        - id, form: {integer} or id:{integer};
+                        - uuid, form: uuid:{string}
+                        - cname, form: cname:{string}
+
+    Request body:
+        Do not supply a request body with this method
+
+    Response
+    --------
+
+    If successful, this method returns null in JSON
+
+    """
+    kind, kind_id = validate(forms.identifier_form, identifier)
+    tq = TaskQueue(appname, taskqueue)
+    if kind == 'id':
+        tq.delete_task(kind_id)
+    elif kind == 'uuid':
+        tq.delete_task_by_uuid(kind_id)
+    elif kind == 'cname':
+        tq.delete_task_by_cname(kind_id)
+    return 'null'
