@@ -4,17 +4,17 @@ import anyjson
 from werkzeug import MultiDict
 from voluptuous import MultipleInvalid
 from flask import Flask, request, jsonify
-from flask.ext.redis import Redis
 
 from asynx_core.taskqueue import (TaskQueue as _TaskQueue,
                                   TaskAlreadyExists,
                                   TaskNotFound)
 
-from . import forms
+from . import forms, engines
 
 app = Flask('asynx_server')
 app.config.from_pyfile('application.cfg')
-redisconn = Redis(app)
+redisconn = engines.make_redis(app)
+celeryapp = engines.make_celery(app)
 
 
 class TaskQueue(_TaskQueue):
@@ -24,7 +24,7 @@ class TaskQueue(_TaskQueue):
         self.bind_redis(redisconn)
 
 
-class JSONParseError(Exception):
+class JSONParseError(ValueError):
     pass
 
 

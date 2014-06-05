@@ -26,14 +26,14 @@ class TaskStatusNotMatched(Exception):
 
 
 @celery.shared_task()
-def request_task(appname, queuename, task_id):
+def request_task(tq_class, appname, queuename, task_id):
     """Dispatch an HTTP request task."""
-    tq = TaskQueue(appname, queuename)
+    tq = tq_class(appname, queuename)
     try:
         task = tq._get_task(task_id)
     except TaskNotFound:
         return
-    task.dispatch(**task.request)
+    task.dispatch()
 
 
 class TaskQueue(object):
@@ -138,7 +138,7 @@ class TaskQueue(object):
 
         """
         uuidkey = self.__uuidkey()
-        args = [self.appname, self.queuename, task.id]
+        args = [self.__class__, self.appname, self.queuename, task.id]
         if task.eta is None:
             # apply async immediately
             result = request_task.apply_async(args)
