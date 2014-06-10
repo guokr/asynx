@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 import redis
 import anyjson
+from pytz import utc
 from celery import Celery
 
 from asynx_core.taskqueue import (TaskQueue, Task,
@@ -40,7 +41,7 @@ class TaskQueueTestCase(TestCase):
         r = self.conn1.hmget(metakey, 'status', 'request',
                              'cname', 'on_complete', 'on_failure',
                              'on_success', 'uuid')
-        self.assertEqual(r[0:1] + r[2:-1], [b'"enqueued"', b'null', b'null',
+        self.assertEqual(r[0:1] + r[2:-1], [b'"new"', b'null', b'null',
                                             b'"__report__"', b'null'])
         self.assertEqual(anyjson.loads(not_bytes(r[1])),
                          {"url": "http://httpbin.org", "method": "GET"})
@@ -69,6 +70,7 @@ class TaskQueueTestCase(TestCase):
         self.assertEqual(task['status'], 'delayed')
         self.assertEqual(task['cname'], 'task001')
         self.assertTrue(2.5 < task['countdown'] < 2.71287)
+        self.assertEqual(task['eta'].utcoffset(), timedelta(0))
         self.assertRaises(TaskAlreadyExists,
                           tq.add_task, {}, cname='task001')
 
@@ -84,16 +86,21 @@ class TaskQueueTestCase(TestCase):
                 {'method': 'POST',
                  'url': 'http://httpbin.org/post',
                  'payload': 'test'},
-                cname='task{0}'.format(2 * i + 1))
+                cname='task{0}'.format(2 * i + 1),
+                countdown=1)
         self.assertEqual(tq.count_tasks(), 102)
         offset93 = tq.iter_tasks(93)
         task93 = next(offset93)
         self.assertEqual(task93['cname'], 'task93')
         j = 0
+        utcnow = utc.localize(datetime.utcnow())
+        delta = timedelta(seconds=5)
         for task in tq.iter_tasks(per_pipeline=17):
             self.assertEqual(task['cname'], 'task{0}'.format(j))
             if j % 2:
                 self.assertEqual(task['request']['method'], 'POST')
+                self.assertTrue(
+                    utcnow - delta < task['eta'] < utcnow + delta)
             else:
                 self.assertEqual(task['request']['method'], 'GET')
             j += 1
@@ -113,7 +120,7 @@ class TaskQueueTestCase(TestCase):
             tq.add_task({'method': 'GET',
                          'url': 'http://httpbin.org'})
         task = tq.get_task(5)
-        self.assertEqual(task['status'], 'enqueued')
+        self.assertEqual(task['status'], 'new')
         self.assertEqual(task['id'], 5)
         self.assertEqual(task['cname'], None)
         self.assertRaises(TaskNotFound, tq.get_task, 6)
@@ -125,7 +132,7 @@ class TaskQueueTestCase(TestCase):
             task = tq.add_task({'method': 'GET',
                                 'url': 'http://httpbin.org'})
         task = tq.get_task_by_uuid(task['uuid'])
-        self.assertEqual(task['status'], 'enqueued')
+        self.assertEqual(task['status'], 'new')
         self.assertEqual(task['id'], 5)
         self.assertEqual(task['cname'], None)
         self.assertRaises(TaskNotFound, tq.get_task_by_uuid, 'notuuid')
@@ -137,7 +144,7 @@ class TaskQueueTestCase(TestCase):
                             'url': 'http://httpbin.org'},
                            cname='tasktest')
         task = tq.get_task_by_cname('tasktest')
-        self.assertEqual(task['status'], 'enqueued')
+        self.assertEqual(task['status'], 'new')
         self.assertEqual(task['id'], 1)
         self.assertEqual(task['cname'], 'tasktest')
         self.assertRaises(TaskNotFound, tq.get_task_by_cname, 'notexist')
@@ -187,11 +194,11 @@ class TaskQueueTestCase(TestCase):
         tq.add_task({'method': 'GET',
                      'url': 'http://httpbin.org'},
                     cname='deletetask')
-        tq._update_status(1, 'running', 'enqueued', 'delayed')
+        tq._update_status(1, 'running', 'new', 'delayed')
         self.assertRaises(
             TaskStatusNotMatched,
             tq._update_status,
-            1, 'running', 'enqueued', 'delayed')
+            1, 'running', 'new', 'delayed')
 
     def test_task_dispatch(self):
         conn1 = self.conn1

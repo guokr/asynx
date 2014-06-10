@@ -3,6 +3,7 @@
 from uuid import UUID
 
 import voluptuous as v
+from dateutil import parser
 from voluptuous import Schema, Required, All, Any, Coerce
 
 
@@ -24,6 +25,13 @@ def IdentifierKind(kind):
         return (kind, val)
     return f
 
+
+def DateTime(val):
+    try:
+        return parser.parse(val)
+    except (TypeError, AttributeError, ValueError):
+        raise v.Invalid("expected datetime")
+
 try:
     String = Any(unicode, str, msg='expected string')
 except NameError:
@@ -39,15 +47,15 @@ add_task_form = Schema({
         Required('method', default='GET'): v.Upper,
         Required('url'): Http,
         'headers': {String: String},
-        'payload': String,
-        'timeout': int,
-        'allow_redirects': bool
+        'payload': Any(String, None),
+        'timeout': Any(Coerce(float), None),
+        'allow_redirects': Any(bool, None)
     },
     'cname': String,
-    'countdown': All(Coerce(float), v.Range(.0)),
-    'eta': All(Coerce(float), v.Range(.0)),
+    'countdown': Any(All(Coerce(float), v.Range(.0)), None),
+    'eta': Any(Coerce(DateTime), None),
     Any('on_success', 'on_failure', 'on_complete'):
-    Any('__report__', Http, NestedSchema('add_task_form'))
+    Any('__report__', Http, NestedSchema('add_task_form'), None)
 })
 
 identifier_form = Schema(

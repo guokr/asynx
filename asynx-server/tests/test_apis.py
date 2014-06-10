@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 
+from datetime import datetime
 from unittest import TestCase
 
 import redis
 import anyjson
+from pytz import utc
+from tzlocal import get_localzone
 from celery import Celery
 
 from asynx_server import apis
@@ -49,7 +52,7 @@ class ApisTestCase(TestCase):
         self.assertEqual(len(result['items']), 50)
         self.assertEqual(result['items'][0]['id'], 1)
         self.assertEqual(result['items'][49]['id'], 50)
-        self.assertEqual(result['items'][49]['status'], 'enqueued')
+        self.assertEqual(result['items'][49]['status'], 'new')
         rv = self.client.get('/app/test/taskqueues/default/tasks?offset=50')
         self.assertEqual(rv.status_code, 200)
         result = anyjson.loads(rv.data)
@@ -67,7 +70,8 @@ class ApisTestCase(TestCase):
                         cname='testtask')
         task_dict = {
             'request': {'url': 'http://httpbin.org/get'},
-            'cname': 'testtask'
+            'cname': 'testtask',
+            'eta': '10:42'
         }
         rv = self.client.post(
             '/app/test/taskqueues/default/tasks',
@@ -83,8 +87,14 @@ class ApisTestCase(TestCase):
         self.assertEqual(task['id'], 3)
         self.assertEqual(task['request']['method'], 'GET')
         self.assertEqual(task['cname'], 'testtask1')
-        self.assertEqual(task['eta'], None)
-        self.assertEqual(task['countdown'], None)
+        now = datetime.now()
+        eta_expect = utc.normalize(
+            get_localzone().localize(
+                datetime(now.year, now.month, now.day, 10, 42)
+            )
+        ).isoformat()
+        self.assertEqual(task['eta'], eta_expect)
+        self.assertTrue(isinstance(task['countdown'], float))
 
     def test_get_task(self):
         with self.app.app_context():

@@ -2,6 +2,7 @@
 # -*- coding: UTF-8 -*-
 
 import os
+import sys
 import setuptools
 
 try:
@@ -12,6 +13,8 @@ try:
 except ImportError:
     pass
 
+py_version = sys.version_info
+
 with open(os.path.join(os.getcwd(),
                        'asynx_server/version.txt')) as fp:
     VERSION = fp.read().strip()
@@ -21,11 +24,20 @@ def strip_comments(l):
     return l.split('#', 1)[0].strip()
 
 
-def reqs(filename):
-    with open(os.path.join(os.getcwd(),
-                           filename)) as fp:
-        return filter(None, [strip_comments(l)
-                             for l in fp.readlines()])
+def reqs(*filename):
+    requires = set([])
+    for fname in filename:
+        with open(os.path.join(os.getcwd(),
+                               fname)) as fp:
+            requires |= set(filter(None, [strip_comments(l)
+                                          for l in fp.readlines()]))
+    return list(requires)
+
+if py_version[0:2] == (2, 6):
+    install_requires = reqs('requirements.txt',
+                            'py26-requirements.txt')
+else:
+    install_requires = reqs('requirements.txt')
 
 setup_params = dict(
     name="asynx-server",
@@ -36,7 +48,7 @@ setup_params = dict(
     description=('An open source, distributed taskqueue / scheduler '
                  'service inspired by Google App Engine'),
     packages=['asynx_server'],
-    install_requires=reqs('requirements.txt'),
+    install_requires=install_requires,
     tests_require=reqs('test-requirements.txt'),
     include_package_data=True,
     classifiers=[

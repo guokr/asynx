@@ -7,6 +7,9 @@ from datetime import datetime, timedelta
 
 import celery
 import requests
+from pytz import utc
+from dateutil import parser
+from tzlocal import get_localzone
 from redis import WatchError
 
 from ._util import (_dumps, _loads, dict_items, basestring,
@@ -25,6 +28,10 @@ class TaskStatusNotMatched(Exception):
     pass
 
 
+def utcnow():
+    return utc.localize(datetime.utcnow())
+
+
 @celery.shared_task()
 def request_task(tq_class, appname, queuename, task_id):
     """Dispatch an HTTP request task."""
@@ -38,12 +45,14 @@ def request_task(tq_class, appname, queuename, task_id):
 
 class TaskQueue(object):
 
-    def __init__(self, appname, queuename='default'):
+    def __init__(self, appname, queuename='default', localzone=None):
         """Initialize a TaskQueue object
 
         Parameters:
             - appname: string, application's name
             - queuename: string, queue's name, default "default"
+            - localzone: timezone object, the local timezone to be
+                         used if the incoming datetime is naive
 
         Usage:
             >>> import redis
@@ -54,6 +63,7 @@ class TaskQueue(object):
         """
         self.appname = appname
         self.queuename = queuename
+        self.localzone = localzone or get_localzone()
         self._redis = None
 
     @property
@@ -139,10 +149,9 @@ class TaskQueue(object):
         """
         uuidkey = self.__uuidkey()
         args = [self.__class__, self.appname, self.queuename, task.id]
-        if task.eta is None:
+        if task.eta is None or task.countdown <= 0:
             # apply async immediately
             result = request_task.apply_async(args)
-            task.status = 'enqueued'
         else:
             result = request_task.apply_async(
                 args, countdown=task.countdown)
@@ -183,6 +192,9 @@ class TaskQueue(object):
             task dict
 
         """
+        if eta and eta.tzinfo is None:
+            # a naive timestamp, localize it
+            eta = self.localzone.localize(eta)
         task = Task(request=request, cname=cname,
                     countdown=countdown, eta=eta,
                     on_success=on_success,
@@ -398,9 +410,10 @@ class TaskQueue(object):
         def __update_status(pipe):
             previous = not_bytes(pipe.hget(metakey, 'status'))
             previous = _loads(previous)
-            if previous not in (ensure_previous):
+            if previous not in ensure_previous:
                 raise TaskStatusNotMatched(
-                    'status of task "{0}" is not matched'.format(task_id))
+                    'status of task "{0}" is not matched ({1} not in {2})'
+                    .format(task_id, previous, ensure_previous))
             pipe.multi()
             pipe.hset(metakey, 'status', _dumps(next_status))
 
@@ -411,7 +424,7 @@ class TaskQueue(object):
 class Task(object):
 
     __slots__ = ('request', 'id', 'uuid', 'cname',
-                 'eta', 'status', 'on_success',
+                 '_eta', 'status', 'on_success',
                  'on_failure', 'on_complete', '_taskqueue')
 
     def __init__(self, request, id=None,
@@ -425,7 +438,7 @@ class Task(object):
         self.countdown = countdown
         if countdown is None:
             self.eta = eta
-        # valid status: new, enqueued, delayed, running
+        # valid status: new, delayed, running
         self.status = status
         self.on_success = on_success
         self.on_failure = on_failure
@@ -446,9 +459,19 @@ class Task(object):
         return self._taskqueue
 
     @property
+    def eta(self):
+        return self._eta
+
+    @eta.setter
+    def eta(self, val):
+        if val:
+            val = utc.normalize(val)
+        self._eta = val
+
+    @property
     def countdown(self):
         if self.eta:
-            delta = self.eta - datetime.now()
+            delta = self.eta - utcnow()
             return get_total_seconds(delta)
 
     @countdown.setter
@@ -457,12 +480,12 @@ class Task(object):
             # None or 0
             return
         delta = timedelta(seconds=val)
-        self.eta = datetime.now() + delta
+        self.eta = utcnow() + delta
 
     @property
-    def eta_timestamp(self):
+    def eta_isoformat(self):
         if self.eta:
-            return float(self.eta.strftime('%s.%f'))
+            return self.eta.isoformat()
 
     @classmethod
     def _wrap_response(cls, response):
@@ -497,7 +520,7 @@ class Task(object):
             kwargs['request']['headers'].update({
                 'X-Asynx-Chained': self.request['url'],
                 'X-Asynx-Chained-TaskUUID': self.uuid,
-                'X-Asynx-Chained-TaskETA': str(self.eta_timestamp)
+                'X-Asynx-Chained-TaskETA': self.eta_isoformat or '-',
             })
             if self.cname:
                 kwargs['request']['headers'].update({
@@ -508,7 +531,7 @@ class Task(object):
 
     def dispatch(self):
         self.taskqueue._update_status(self.id, 'running',
-                                      'enqueued', 'delayed')
+                                      'new', 'delayed')
         self.status = 'running'
         response = self._dispatch(**self.request)
         status_code = response.status_code
@@ -541,7 +564,7 @@ class Task(object):
         headers.update({
             'X-Asynx-QueueName': self.taskqueue.queuename,
             'X-Asynx-TaskUUID': self.uuid,
-            'X-Asynx-TaskETA': str(self.eta_timestamp),
+            'X-Asynx-TaskETA': self.eta_isoformat or '-',
         })
         headers.setdefault('User-Agent', user_agent())
         if self.cname:
@@ -566,7 +589,7 @@ class Task(object):
         task_id = task.pop('id')
         # don't store relative countdown in redis
         task.pop('countdown')
-        task['eta'] = self.eta_timestamp
+        task['eta'] = self.eta_isoformat
         for key, val in dict_items(task):
             task[key] = _dumps(val)
         return task_id, task
@@ -586,5 +609,5 @@ class Task(object):
         task_dict = task_dict_tmp
         task_dict['id'] = task_id
         if task_dict['eta'] is not None:
-            task_dict['eta'] = datetime.fromtimestamp(task_dict['eta'])
+            task_dict['eta'] = parser.parse(task_dict['eta'])
         return cls.from_dict(task_dict)

@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 
+from datetime import datetime
+
+import pytz
 import anyjson
 from werkzeug import MultiDict
 from voluptuous import MultipleInvalid
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, json
 
 from asynx_core.taskqueue import (TaskQueue as _TaskQueue,
                                   TaskAlreadyExists,
@@ -17,10 +20,24 @@ redisconn = engines.make_redis(app)
 celeryapp = engines.make_celery(app)
 
 
+class AsynxJSONEncoder(json.JSONEncoder):
+
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super(AsynxJSONEncoder, self).default(obj)
+
+app.json_encoder = AsynxJSONEncoder
+
+
 class TaskQueue(_TaskQueue):
 
     def __init__(self, appname, queuename='default'):
-        super(TaskQueue, self).__init__(appname, queuename)
+        localzone = None
+        # support optional extension Flask-Babel
+        if 'BABEL_DEFAULT_TIMEZONE' in app.config:
+            localzone = pytz.timezone(app.config['BABEL_DEFAULT_TIMEZONE'])
+        super(TaskQueue, self).__init__(appname, queuename, localzone)
         self.bind_redis(redisconn)
 
 
@@ -130,8 +147,8 @@ def list_tasks(appname, taskqueue):
 
 
 @app.route('/app/<appname>/taskqueues/<taskqueue>/tasks', methods=['POST'])
-def insert_tasks(appname, taskqueue):
-    """Inserts a task into an taskqueue
+def insert_task(appname, taskqueue):
+    """Inserts a task into a taskqueue
 
     Request
     -------
@@ -181,7 +198,7 @@ def insert_tasks(appname, taskqueue):
         - cname:      string & optional, custom name for the task
                       min: 3 chars, max: 96 chars
         - countdown:  float, time interval to trigger the task, in seconds
-        - eta:        float, the UTC unix timestamp to trigger the task,
+        - eta:        datetime, the local unix timestamp to trigger the task,
                       can not be used with countdown
         - on_success: success callback. Can be a URL and it will be called
                       with a POST request;
@@ -219,14 +236,14 @@ def insert_tasks(appname, taskqueue):
     - id:     integer, internal id of this task, uniqued in a queue
     - uuid:   string, internal uuid of this task, uniqued across the service
     - status: string, current status of this task, can be:
-        "new"
-        "enqueued", enqueued and will be executed immediately
+        "new", enqueued and will be executed immediately
         "delayed", enqueued but will not be triggered until eta
 
     """
     task_dict = validate(forms.add_task_form, datatype='json')
     tq = TaskQueue(appname, taskqueue)
-    return jsonify(tq.add_task(**task_dict)), 201
+    x = tq.add_task(**task_dict)
+    return jsonify(x), 201
 
 
 @app.route('/app/<appname>/taskqueues/<taskqueue>/tasks/<identifier>',
@@ -258,7 +275,7 @@ def get_task(appname, taskqueue, identifier):
     Response
     --------
 
-    Task resource same as `insert_tasks`.
+    Task resource same as `insert_task`.
 
     """
     kind, kind_id = validate(forms.identifier_form, identifier)
@@ -313,4 +330,4 @@ def delete_task(appname, taskqueue, identifier):
         tq.delete_task_by_uuid(kind_id)
     elif kind == 'cname':
         tq.delete_task_by_cname(kind_id)
-    return 'null'
+    return 'null', 200, {'Content-Type': 'application/json'}

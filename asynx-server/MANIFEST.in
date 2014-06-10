@@ -1,2 +1,3 @@
 include asynx_server/version.txt
+include asynx_server/application.cfg
 recursive-include tests *.py
