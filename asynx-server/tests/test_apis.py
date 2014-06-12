@@ -37,7 +37,7 @@ class ApisTestCase(TestCase):
                           'url': 'http://httpbin.org/get'})
              for i in range(72)]
         rv = self.client.get('/app/test/taskqueues/default/tasks?limit=a')
-        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(rv.status_code, 422)
         err = anyjson.loads(rv.data)
         self.assertEqual(err['error_code'], 200101)
         self.assertEqual(err['error_desc'], 'Validation failure')
@@ -62,6 +62,40 @@ class ApisTestCase(TestCase):
         self.assertEqual(result['items'][0]['id'], 51)
         self.assertEqual(result['items'][21]['id'], 72)
 
+    def test_scheduled_task(self):
+        task_dict = {
+            'request': {'url': 'http://httpbin.org/get'},
+            'schedule': '1234567',
+            'cname': 'haha'
+        }
+        rv = self.client.post(
+            '/app/test/taskqueues/default/tasks',
+            data=anyjson.dumps(task_dict))
+        self.assertEqual(rv.status_code, 422)
+        task_dict['schedule'] = 'every 30 second'
+        task_dict.pop('cname')
+        rv = self.client.post(
+            '/app/test/taskqueues/default/tasks',
+            data=anyjson.dumps(task_dict))
+        self.assertEqual(rv.status_code, 422)
+        task_dict['cname'] = 'test schedule'
+        rv = self.client.post(
+            '/app/test/taskqueues/default/tasks',
+            data=anyjson.dumps(task_dict))
+        self.assertEqual(rv.status_code, 201)
+        task = anyjson.loads(rv.data)
+        self.assertEqual(task['id'], 1)
+        self.assertEqual(task['schedule'], 'every 30.0 seconds')
+        task_dict['schedule'] = '*/1 1-5,8 * * *'
+        task_dict['cname'] = 'test crontab'
+        rv = self.client.post(
+            '/app/test/taskqueues/default/tasks',
+            data=anyjson.dumps(task_dict))
+        self.assertEqual(rv.status_code, 201)
+        task = anyjson.loads(rv.data)
+        self.assertEqual(task['id'], 2)
+        self.assertEqual(task['schedule'], '*/1 1-5,8 * * *')
+
     def test_insert_task(self):
         with self.app.app_context():
             tq = apis.TaskQueue('test')
@@ -84,7 +118,7 @@ class ApisTestCase(TestCase):
             data=anyjson.dumps(task_dict))
         self.assertEqual(rv.status_code, 201)
         task = anyjson.loads(rv.data)
-        self.assertEqual(task['id'], 3)
+        self.assertEqual(task['id'], 2)
         self.assertEqual(task['request']['method'], 'GET')
         self.assertEqual(task['cname'], 'testtask1')
         now = datetime.now()
@@ -119,28 +153,28 @@ class ApisTestCase(TestCase):
         self.assertTrue(task == task_by_id_implicit == task_by_id ==
                         task_by_uuid == task_by_cname)
         rv = self.client.get('/app/test/taskqueues/default/tasks/uuid:1')
-        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(rv.status_code, 404)
         rv = self.client.get(
             '/app/test/taskqueues/default/tasks/{0}'.format(task['uuid']))
-        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(rv.status_code, 404)
         rv = self.client.get('/app/test/taskqueues/default/tasks/testtask')
-        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(rv.status_code, 404)
         rv = self.client.get(
             '/app/test/taskqueues/default/tasks/{0}'.format(2 ** 63 - 1))
         self.assertEqual(rv.status_code, 404)
         rv = self.client.get(
             '/app/test/taskqueues/default/tasks/{0}'.format(2 ** 63))
-        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(rv.status_code, 404)
         rv = self.client.get('/app/test/taskqueues/default/tasks/cname:aaa')
         self.assertEqual(rv.status_code, 404)
         rv = self.client.get('/app/test/taskqueues/default/tasks/cname:aa')
-        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(rv.status_code, 404)
         rv = self.client.get(
             '/app/test/taskqueues/default/tasks/cname:' + ('a' * 96))
         self.assertEqual(rv.status_code, 404)
         rv = self.client.get(
             '/app/test/taskqueues/default/tasks/cname:' + ('a' * 97))
-        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(rv.status_code, 404)
 
     def test_delete_task(self):
         with self.app.app_context():

@@ -16,7 +16,7 @@ except ImportError:
 py_version = sys.version_info
 
 with open(os.path.join(os.getcwd(),
-                       'asynx_server/version.txt')) as fp:
+                       'asynx_sdk/version.txt')) as fp:
     VERSION = fp.read().strip()
 
 
@@ -39,34 +39,32 @@ if py_version[0:2] == (2, 6):
 else:
     install_requires = reqs('requirements.txt')
 
+
 setup_params = dict(
-    name="asynx-server",
+    name="asynx-sdk",
     version=VERSION,
     url="https://github.com/guokr/asynx",
     author='Guokr',
     author_email="bug@guokr.com",
-    description=('RESTful server side of an open source, distributed, '
-                 'and web / HTTP oriented taskqueue & scheduler service '
+    description=('Python SDK for an open source, distributed, and '
+                 'web / HTTP oriented taskqueue & scheduler service '
                  'inspired by Google App Engine'),
-    packages=['asynx_server'],
+    packages=['asynx_sdk'],
     install_requires=install_requires,
     tests_require=reqs('test-requirements.txt'),
     include_package_data=True,
     classifiers=[
         'Development Status :: 3 - Alpha',
         'Environment :: Web Environment',
-        'Framework :: Flask',
         'Intended Audience :: Developers',
         'License :: OSI Approved :: MIT License',
-        'Operating System :: POSIX',
+        'Operating System :: OS Independent',
         'Programming Language :: Python',
-        'Programming Language :: Python :: 2 :: Only',
+        'Programming Language :: Python :: 2',
         'Programming Language :: Python :: 2.6',
         'Programming Language :: Python :: 2.7',
-        'Topic :: Internet :: WWW/HTTP :: WSGI :: Application'],
-    entry_points={
-        'console_scripts': 'asynx = asynx_server.manage:main'
-    },
+        'Topic :: Internet :: WWW/HTTP :: Dynamic Content',
+        'Topic :: Software Development :: Libraries :: Python Modules'],
     test_suite="nose.collector",
     zip_safe=True)
 

@@ -5,14 +5,14 @@ from datetime import datetime, timedelta
 
 import redis
 import anyjson
-from pytz import utc
-from celery import Celery
+from celery import Celery, schedules
 
 from asynx_core.taskqueue import (TaskQueue, Task,
                                   TaskNotFound,
                                   TaskStatusNotMatched,
-                                  TaskAlreadyExists)
-from asynx_core._util import user_agent, not_bytes
+                                  TaskAlreadyExists,
+                                  TaskCNameRequired)
+from asynx_core._util import user_agent, not_bytes, utcnow
 
 
 class TaskQueueTestCase(TestCase):
@@ -37,6 +37,7 @@ class TaskQueueTestCase(TestCase):
         idx, task_dict = task._to_redis()
         metakey = tq._TaskQueue__metakey(idx)
         self.assertTrue(self.conn1.hmset(metakey, task_dict))
+        task.bind_taskqueue(tq)
         tq._dispatch_task(task)
         r = self.conn1.hmget(metakey, 'status', 'request',
                              'cname', 'on_complete', 'on_failure',
@@ -54,6 +55,7 @@ class TaskQueueTestCase(TestCase):
         idx, task_dict = task._to_redis()
         metakey = tq._TaskQueue__metakey(idx)
         self.assertTrue(self.conn1.hmset(metakey, task_dict))
+        task.bind_taskqueue(tq)
         tq._dispatch_task(task)
         self.assertEqual(self.conn1.hget(metakey, 'status'), b'"delayed"')
 
@@ -74,6 +76,42 @@ class TaskQueueTestCase(TestCase):
         self.assertRaises(TaskAlreadyExists,
                           tq.add_task, {}, cname='task001')
 
+    def test_scheduled_task(self):
+        tq = TaskQueue('test')
+        tq.bind_redis(self.conn1)
+        kw = {
+            'request': {'method': 'GET',
+                        'url': 'http://httpbin.org'},
+            'schedule': schedules.crontab('*/10', '1,2-10')
+        }
+        self.assertRaises(TaskCNameRequired, tq.add_task, **kw)
+        kw['cname'] = 'crontest'
+        task00 = tq.add_task(**kw)
+        metakey = tq._TaskQueue__metakey(task00['id'])
+        self.assertEqual(not_bytes(self.conn1.hget(metakey, 'schedule')),
+                         '"*/10 1,2-10 * * *"')
+        kw['schedule'] = schedules.schedule(30)
+        kw['cname'] = 'schedtest'
+        task01 = tq.add_task(**kw)
+        metakey = tq._TaskQueue__metakey(task01['id'])
+        self.assertEqual(not_bytes(self.conn1.hget(metakey, 'schedule')),
+                         '"every 30.0 seconds"')
+        task10 = tq.get_task_by_cname('crontest')
+        self.assertEqual(task00, task10)
+        task11 = tq.get_task_by_cname('schedtest')
+        self.assertEqual(task01, task11)
+        task = tq._get_task_by_cname('schedtest')
+        task.dispatch()
+        task21 = tq.get_task_by_cname('schedtest')
+        self.assertNotEqual(task11, task21)
+        now = utcnow()
+        self.assertTrue(now - timedelta(5) < task21['last_run_at'] < now)
+        task11.pop('last_run_at')
+        task11.pop('uuid')
+        task21.pop('last_run_at')
+        task21.pop('uuid')
+        self.assertEqual(task11, task21)
+
     def test_iter_tasks(self):
         tq = TaskQueue('test')
         tq.bind_redis(self.conn1)
@@ -93,14 +131,14 @@ class TaskQueueTestCase(TestCase):
         task93 = next(offset93)
         self.assertEqual(task93['cname'], 'task93')
         j = 0
-        utcnow = utc.localize(datetime.utcnow())
+        now = utcnow()
         delta = timedelta(seconds=5)
         for task in tq.iter_tasks(per_pipeline=17):
             self.assertEqual(task['cname'], 'task{0}'.format(j))
             if j % 2:
                 self.assertEqual(task['request']['method'], 'POST')
                 self.assertTrue(
-                    utcnow - delta < task['eta'] < utcnow + delta)
+                    now - delta < task['eta'] < now + delta)
             else:
                 self.assertEqual(task['request']['method'], 'GET')
             j += 1

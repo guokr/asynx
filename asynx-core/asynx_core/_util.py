@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
-from datetime import timedelta
+from pytz import utc
+from datetime import datetime, timedelta
 
 import anyjson
 
@@ -37,3 +38,7 @@ def not_bytes(s):
 
 def user_agent():
     return 'Asynx/4.0'
+
+
+def utcnow():
+    return utc.localize(datetime.utcnow())

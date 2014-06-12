@@ -1,3 +1,4 @@
+anyjson>=0.3.3
 asynx_core>=0.4dev
 daemonize>=2.3
 flask>=0.10.1

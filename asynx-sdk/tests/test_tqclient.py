@@ -4,7 +4,7 @@ from unittest import TestCase
 from datetime import datetime, timedelta
 
 from pytz import utc
-from asynx_client import TaskQueueClient
+from asynx_sdk import TaskQueueClient
 
 
 class TQClientTestCase(TestCase):
@@ -27,6 +27,15 @@ class TQClientTestCase(TestCase):
         utcnow = utc.localize(datetime.utcnow())
         delta = timedelta(seconds=205)
         self.assertTrue(utcnow < task['eta'] < utcnow + delta)
+
+    def test_scheduled_task(self):
+        tqc = TaskQueueClient('http://localhost:17969', 'test')
+        kw = {'url': 'http://httpbin.org/get',
+              'schedule': '*/10 * * * *'}
+        self.assertRaises(tqc.ResponseError, tqc.add_task, **kw)
+        kw['cname'] = 'test the crontab'
+        task = tqc.add_task(**kw)
+        self.assertEqual(task['schedule'], '*/10 * * * *')
 
     def test_list_tasks(self):
         tqc = TaskQueueClient('http://localhost:17969', 'test')

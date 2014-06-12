@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
 
+import re
 import copy
+import weakref
 import inspect
 from itertools import islice
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import celery
 import requests
 from pytz import utc
 from dateutil import parser
 from tzlocal import get_localzone
+from celery import schedules
 from redis import WatchError
 
-from ._util import (_dumps, _loads, dict_items, basestring,
+from ._util import (_dumps, _loads, dict_items, basestring, utcnow,
                     get_total_seconds, not_bytes, user_agent)
 
 
@@ -28,8 +31,8 @@ class TaskStatusNotMatched(Exception):
     pass
 
 
-def utcnow():
-    return utc.localize(datetime.utcnow())
+class TaskCNameRequired(Exception):
+    pass
 
 
 @celery.shared_task()
@@ -94,7 +97,7 @@ class TaskQueue(object):
         self._redis = connection
 
     def __hincrkey(self):
-        """generating a auto-increment key per queue for every app
+        """generating an auto-increment key per queue for every app
 
         Doctest:
             >>> tq = TaskQueue('test', 'custom')
@@ -104,6 +107,17 @@ class TaskQueue(object):
         """
 
         return 'AX:INC', '{0}:{1}'.format(self.appname, self.queuename)
+
+    def __schedkey(self):
+        """generates a key listing all scheduled tasks
+
+        Doctest:
+            >>> tq = TaskQueue('test', 'custom')
+            >>> tq._TaskQueue__schedkey()
+            'AX:SC:test:custom'
+
+        """
+        return 'AX:SC:{0}:{1}'.format(self.appname, self.queuename)
 
     def __metakey(self, idx):
         """generating a metakey to store task's metadata
@@ -147,31 +161,26 @@ class TaskQueue(object):
             - task: a Task object with status == 'new'
 
         """
-        uuidkey = self.__uuidkey()
-        args = [self.__class__, self.appname, self.queuename, task.id]
-        if task.eta is None or task.countdown <= 0:
-            # apply async immediately
-            result = request_task.apply_async(args)
-        else:
-            result = request_task.apply_async(
-                args, countdown=task.countdown)
-            task.status = 'delayed'
-        task.uuid = result.id
+        old_uuid = task.uuid
+        task.apply_async(task.last_run_at or utcnow())
         update_fields = {
             'uuid': task.uuid,
             'status': task.status
         }
         for key, val in dict_items(update_fields):
             update_fields[key] = _dumps(val)
+        uuidkey = self.__uuidkey()
         metakey = self.__metakey(task.id)
         with self.redis.pipeline() as pipe:
             pipe.hmset(metakey, update_fields)
+            if old_uuid:
+                pipe.zrem(uuidkey, old_uuid)
             pipe.zadd(uuidkey, task.id, task.uuid)
             pipe.execute()
 
     def add_task(self, request, cname=None,
                  countdown=None, eta=None,
-                 on_success=None,
+                 schedule=None, on_success=None,
                  on_failure='__report__',
                  on_complete=None):
         """adding and dispatch task
@@ -180,9 +189,10 @@ class TaskQueue(object):
             - request: a dict contains request arguments:
                 method, url, headers(dict), payload(string),
                 timeout, allow_redirects(bool)
-            - cname: string, custom task name
-            - countdown: int/float in seconds
-            - eta: datatime object
+            - cname: optional, string, custom task name
+            - countdown: optional, int/float in seconds
+            - eta: optional, datatime object
+            - schedule: optional, celery schedule/crontab object
             - on_success: callback when success, can be None,
                           a url, an internal method or subtask dict
             - on_failure: callback when failure
@@ -195,14 +205,15 @@ class TaskQueue(object):
         if eta and eta.tzinfo is None:
             # a naive timestamp, localize it
             eta = self.localzone.localize(eta)
+        if schedule and not cname:
+            raise TaskCNameRequired('Scheduled task must have a custom name')
         task = Task(request=request, cname=cname,
                     countdown=countdown, eta=eta,
+                    schedule=schedule,
                     on_success=on_success,
                     on_failure=on_failure,
                     on_complete=on_complete)
         incrkey, incrhash = self.__hincrkey()
-        task.id = idx = self.redis.hincrby(incrkey, incrhash)
-        metakey = self.__metakey(idx)
         with self.redis.pipeline() as pipe:
             try:
                 if task.cname:
@@ -214,9 +225,15 @@ class TaskQueue(object):
                         raise TaskAlreadyExists(
                             'task "{0}" is already exists (1)'.format(cname))
                     pipe.multi()
+                task.id = idx = self.redis.hincrby(incrkey, incrhash)
+                if task.cname:
                     pipe.set(cnamekey, idx)
+                metakey = self.__metakey(idx)
                 _, task_dict = task._to_redis()
                 pipe.hmset(metakey, task_dict)
+                if task.schedule:
+                    schedkey = self.__schedkey()
+                    pipe.zadd(schedkey, 0, idx)
                 pipe.execute()
             except WatchError:
                 raise TaskAlreadyExists(
@@ -360,8 +377,11 @@ class TaskQueue(object):
         metakey = self.__metakey(task.id)
         uuidkey = self.__uuidkey()
         cnamekey = None
+        schedkey = None
         if task.cname:
             cnamekey = self.__cnamekey(task.cname)
+        if task.schedule:
+            schedkey = self.__schedkey()
 
         def __delete_task(pipe):
             pipe.multi()
@@ -369,6 +389,8 @@ class TaskQueue(object):
             pipe.zrem(uuidkey, task.uuid)
             if cnamekey:
                 pipe.delete(cnamekey)
+            if schedkey:
+                pipe.zrem(schedkey, task.id)
         self.redis.transaction(__delete_task, metakey, uuidkey, cnamekey)
 
     def delete_task(self, task_id):
@@ -415,21 +437,27 @@ class TaskQueue(object):
                     'status of task "{0}" is not matched ({1} not in {2})'
                     .format(task_id, previous, ensure_previous))
             pipe.multi()
-            pipe.hset(metakey, 'status', _dumps(next_status))
+            now = utcnow()
+            pipe.hmset(metakey, {
+                'status': _dumps(next_status),
+                'last_run_at': _dumps(now.isoformat())
+            })
+            return now
 
         metakey = self.__metakey(task_id)
-        self.redis.transaction(__update_status, metakey)
+        self.redis.transaction(__update_status, metakey,
+                               value_from_callable=True)
 
 
 class Task(object):
 
     __slots__ = ('request', 'id', 'uuid', 'cname',
-                 '_eta', 'status', 'on_success',
-                 'on_failure', 'on_complete', '_taskqueue')
+                 '_eta', 'schedule', '_last_run_at', 'status',
+                 'on_success', 'on_failure', 'on_complete', '_taskqueue')
 
-    def __init__(self, request, id=None,
-                 uuid=None, cname=None, countdown=None,
-                 eta=None, status='new', on_success=None,
+    def __init__(self, request, id=None, uuid=None, cname=None,
+                 countdown=None, eta=None, schedule=None,
+                 last_run_at=None, status='new', on_success=None,
                  on_failure='__report__', on_complete=None):
         self.id = id
         self.request = request
@@ -438,7 +466,9 @@ class Task(object):
         self.countdown = countdown
         if countdown is None:
             self.eta = eta
-        # valid status: new, delayed, running
+        self.schedule = schedule
+        self.last_run_at = last_run_at
+        # valid status: new, scheduled, delayed, running
         self.status = status
         self.on_success = on_success
         self.on_failure = on_failure
@@ -450,13 +480,14 @@ class Task(object):
     __init_args = set(__init_args)
 
     def bind_taskqueue(self, tq):
-        self._taskqueue = tq
+        self._taskqueue = weakref.proxy(tq)
 
     @property
     def taskqueue(self):
         if self._taskqueue is None:
             raise RuntimeError('task is not bound with taskqueue')
-        return self._taskqueue
+        # ensure the weakref object still exists
+        return self._taskqueue.__weakref__
 
     @property
     def eta(self):
@@ -467,6 +498,16 @@ class Task(object):
         if val:
             val = utc.normalize(val)
         self._eta = val
+
+    @property
+    def last_run_at(self):
+        return self._last_run_at
+
+    @last_run_at.setter
+    def last_run_at(self, val):
+        if val:
+            val = utc.normalize(val)
+        self._last_run_at = val
 
     @property
     def countdown(self):
@@ -482,10 +523,27 @@ class Task(object):
         delta = timedelta(seconds=val)
         self.eta = utcnow() + delta
 
-    @property
-    def eta_isoformat(self):
-        if self.eta:
-            return self.eta.isoformat()
+    @staticmethod
+    def _schedule_to_string(sched):
+        if isinstance(sched, schedules.crontab):
+            return ('{0._orig_minute} {0._orig_hour} '
+                    '{0._orig_day_of_month} {0._orig_month_of_year} '
+                    '{0._orig_day_of_week}').format(sched)
+        else:
+            return 'every {0.seconds} seconds'.format(sched)
+
+    _sched_pattern = re.compile('every\s*(\d+\.?\d*|\d*\.?\d+)\s*seconds?')
+
+    @classmethod
+    def _schedule_from_string(cls, text):
+        if cls._sched_pattern.match(text):
+            seconds = float(cls._sched_pattern.sub('\g<1>', text))
+            return schedules.schedule(seconds)
+        else:
+            m, h, dom, mon, dow = text.split()
+            return schedules.crontab(
+                minute=m, hour=h, day_of_week=dow,
+                day_of_month=dom, month_of_year=mon)
 
     @classmethod
     def _wrap_response(cls, response):
@@ -520,7 +578,8 @@ class Task(object):
             kwargs['request']['headers'].update({
                 'X-Asynx-Chained': self.request['url'],
                 'X-Asynx-Chained-TaskUUID': self.uuid,
-                'X-Asynx-Chained-TaskETA': self.eta_isoformat or '-',
+                'X-Asynx-Chained-TaskETA': (self.eta.isoformat()
+                                            if self.eta else '-'),
             })
             if self.cname:
                 kwargs['request']['headers'].update({
@@ -529,10 +588,36 @@ class Task(object):
             kwargs['request']['payload'] = payload
             return self.taskqueue.add_task(**kwargs)
 
+    def apply_async(self, last_run_at):
+        tq = self.taskqueue
+        args = [tq.__class__, tq.appname, tq.queuename, self.id]
+        if self.schedule is not None:
+            # scheduled task
+            is_due, remaining_s = self.schedule.is_due(last_run_at)
+            if is_due:
+                # apply immediately, no time to set up status
+                result = request_task.apply_async(args)
+            else:
+                result = request_task.apply_async(
+                    args, countdown=remaining_s)
+                if remaining_s > 0.5:
+                    self.status = 'scheduled'
+        elif self.eta is None or self.countdown <= 0:
+            # apply async immediately
+            result = request_task.apply_async(args)
+        else:
+            result = request_task.apply_async(
+                args, countdown=self.countdown)
+            if self.countdown > 0.5:
+                self.status = 'delayed'
+        self.uuid = result.id
+        return result
+
     def dispatch(self):
-        self.taskqueue._update_status(self.id, 'running',
-                                      'new', 'delayed')
+        last_run_at = self.taskqueue._update_status(
+            self.id, 'running', 'new', 'scheduled', 'delayed')
         self.status = 'running'
+        self.last_run_at = last_run_at
         response = self._dispatch(**self.request)
         status_code = response.status_code
         if status_code >= 200 and status_code < 303:
@@ -540,8 +625,12 @@ class Task(object):
         else:
             self._dispatch_callback(self.on_failure, response)
         self._dispatch_callback(self.on_complete, response)
-        # afterward, delete the task whatever
-        self.taskqueue._delete_task(self)
+        if self.schedule:
+            # schedule next running
+            self.taskqueue._dispatch_task(self)
+        else:
+            # afterward, delete the task whatever
+            self.taskqueue._delete_task(self)
 
     def _dispatch(self, method, url, headers=None,
                   payload=None, timeout=None,
@@ -564,7 +653,7 @@ class Task(object):
         headers.update({
             'X-Asynx-QueueName': self.taskqueue.queuename,
             'X-Asynx-TaskUUID': self.uuid,
-            'X-Asynx-TaskETA': self.eta_isoformat or '-',
+            'X-Asynx-TaskETA': self.eta.isoformat() if self.eta else '-',
         })
         headers.setdefault('User-Agent', user_agent())
         if self.cname:
@@ -579,6 +668,8 @@ class Task(object):
             'cname': self.cname,
             'countdown': self.countdown,
             'eta': self.eta,
+            'schedule': self.schedule,
+            'last_run_at': self.last_run_at,
             'status': self.status,
             'on_success': self.on_success,
             'on_failure': self.on_failure,
@@ -589,7 +680,12 @@ class Task(object):
         task_id = task.pop('id')
         # don't store relative countdown in redis
         task.pop('countdown')
-        task['eta'] = self.eta_isoformat
+        if task['eta']:
+            task['eta'] = task['eta'].isoformat()
+        if task['schedule']:
+            task['schedule'] = self._schedule_to_string(task['schedule'])
+        if task['last_run_at']:
+            task['last_run_at'] = task['last_run_at'].isoformat()
         for key, val in dict_items(task):
             task[key] = _dumps(val)
         return task_id, task
@@ -610,4 +706,9 @@ class Task(object):
         task_dict['id'] = task_id
         if task_dict['eta'] is not None:
             task_dict['eta'] = parser.parse(task_dict['eta'])
+        if task_dict['schedule'] is not None:
+            task_dict['schedule'] = \
+                cls._schedule_from_string(task_dict['schedule'])
+        if task_dict['last_run_at'] is not None:
+            task_dict['last_run_at'] = parser.parse(task_dict['last_run_at'])
         return cls.from_dict(task_dict)

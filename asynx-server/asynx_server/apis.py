@@ -4,12 +4,15 @@ from datetime import datetime
 
 import pytz
 import anyjson
+from celery import schedules
 from werkzeug import MultiDict
 from voluptuous import MultipleInvalid
 from flask import Flask, request, jsonify, json
 
-from asynx_core.taskqueue import (TaskQueue as _TaskQueue,
+from asynx_core.taskqueue import (Task as _Task,
+                                  TaskQueue as _TaskQueue,
                                   TaskAlreadyExists,
+                                  TaskCNameRequired,
                                   TaskNotFound)
 
 from . import forms, engines
@@ -25,6 +28,8 @@ class AsynxJSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, datetime):
             return obj.isoformat()
+        elif isinstance(obj, schedules.schedule):
+            return _Task._schedule_to_string(obj)
         return super(AsynxJSONEncoder, self).default(obj)
 
 app.json_encoder = AsynxJSONEncoder
@@ -45,9 +50,13 @@ class JSONParseError(ValueError):
     pass
 
 
+class IdentifierNotFound(Exception):
+    pass
+
+
 error_mapping = {
     200100: (400, 'Parsing failure'),
-    200101: (400, 'Validation failure'),
+    200101: (422, 'Validation failure'),
     207202: (404, 'Task not found'),
     207203: (409, 'Task already exists'),
 }
@@ -69,6 +78,16 @@ def parse_error_handler(e):
 
 @app.errorhandler(MultipleInvalid)
 def validation_error_handler(e):
+    return _error_handler(200101, str(e))
+
+
+@app.errorhandler(IdentifierNotFound)
+def identifier_not_found(e):
+    return _error_handler(207202, str(e))
+
+
+@app.errorhandler(TaskCNameRequired)
+def task_cname_required_handler(e):
     return _error_handler(200101, str(e))
 
 
@@ -181,6 +200,7 @@ def insert_task(appname, taskqueue):
             "cname": :cname,
             "countdown": :countdown,
             "eta": :eta,
+            "schedule": :schedule,
             "on_success": on_success,
             "on_failure": on_failure,
             "on_complete": on_complete
@@ -198,8 +218,10 @@ def insert_task(appname, taskqueue):
         - cname:      string & optional, custom name for the task
                       min: 3 chars, max: 96 chars
         - countdown:  float, time interval to trigger the task, in seconds
-        - eta:        datetime, the local unix timestamp to trigger the task,
-                      can not be used with countdown
+        - eta:        datetime (isoformat), the local unix timestamp to
+                      trigger the task, can not be used with countdown
+        - schedule:   schedule string, provide this if the task is
+                      a scheduled task
         - on_success: success callback. Can be a URL and it will be called
                       with a POST request;
                       or None to do nothing;
@@ -224,6 +246,7 @@ def insert_task(appname, taskqueue):
             },
             countdown: :countdown,
             eta: :eta,
+            last_run_at: :last_run_at,
             status: :status,
             on_success: :on_success,
             on_failure: :on_failure,
@@ -238,6 +261,7 @@ def insert_task(appname, taskqueue):
     - status: string, current status of this task, can be:
         "new", enqueued and will be executed immediately
         "delayed", enqueued but will not be triggered until eta
+    - last_run_at: datetime (isoformat)
 
     """
     task_dict = validate(forms.add_task_form, datatype='json')
@@ -278,7 +302,10 @@ def get_task(appname, taskqueue, identifier):
     Task resource same as `insert_task`.
 
     """
-    kind, kind_id = validate(forms.identifier_form, identifier)
+    try:
+        kind, kind_id = validate(forms.identifier_form, identifier)
+    except MultipleInvalid as e:
+        raise IdentifierNotFound(str(e))
     tq = TaskQueue(appname, taskqueue)
     if kind == 'id':
         task = tq.get_task(kind_id)

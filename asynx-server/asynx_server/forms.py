@@ -6,6 +6,8 @@ import voluptuous as v
 from dateutil import parser
 from voluptuous import Schema, Required, All, Any, Coerce
 
+from asynx_core.taskqueue import Task
+
 
 def NestedSchema(schema_name, msg=None):
 
@@ -32,6 +34,13 @@ def DateTime(val):
     except (TypeError, AttributeError, ValueError):
         raise v.Invalid("expected datetime")
 
+
+def Schedule(val):
+    try:
+        return Task._schedule_from_string(val)
+    except (TypeError, ValueError):
+        raise v.Invalid("expected schedule/crontab string")
+
 try:
     String = Any(unicode, str, msg='expected string')
 except NameError:
@@ -51,9 +60,10 @@ add_task_form = Schema({
         'timeout': Any(Coerce(float), None),
         'allow_redirects': Any(bool, None)
     },
-    'cname': String,
+    'cname': Any(String, None),
     'countdown': Any(All(Coerce(float), v.Range(.0)), None),
     'eta': Any(Coerce(DateTime), None),
+    'schedule': Any(Coerce(Schedule), None),
     Any('on_success', 'on_failure', 'on_complete'):
     Any('__report__', Http, NestedSchema('add_task_form'), None)
 })

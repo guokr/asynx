@@ -46,8 +46,9 @@ setup_params = dict(
     url="https://github.com/guokr/asynx",
     author='Guokr',
     author_email="bug@guokr.com",
-    description=('An open source, distributed taskqueue / scheduler '
-                 'service inspired by Google App Engine'),
+    description=('Core of the open source, distributed, and '
+                 'web / HTTP oriented taskqueue & scheduler service '
+                 'inspired by Google App Engine'),
     packages=['asynx_core'],
     install_requires=install_requires,
     tests_require=reqs('test-requirements.txt'),
@@ -59,7 +60,11 @@ setup_params = dict(
         'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',
         'Programming Language :: Python',
+        'Programming Language :: Python :: 2',
+        'Programming Language :: Python :: 2.6',
+        'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.3',
         'Topic :: Software Development :: Libraries :: Python Modules'],
     test_suite="nose.collector",
     zip_safe=True)

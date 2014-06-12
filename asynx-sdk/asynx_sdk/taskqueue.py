@@ -115,6 +115,7 @@ class TaskQueueClient(object):
              cname=None,
              countdown=None,
              eta=None,
+             schedule=None,
              on_success=None,
              on_failure='__report__',
              on_complete=None):
@@ -145,6 +146,9 @@ class TaskQueueClient(object):
                        in seconds, can not be passed with eta
             - eta:     (optional) datetime, when to trigger the task, can not
                        be passed with countdown
+            - schedule: (optional) string, defines scheduled task, for example:
+                       "every 30.0 seconds", or in crontab style like
+                       "*/10 1-5 * * *" (m h dom mon dow)
             - on_success: (optional) success callback.
                        string of URL (will be called using a POST request);
                        or `None` to do nothing;
@@ -192,6 +196,8 @@ class TaskQueueClient(object):
             if isinstance(eta, datetime):
                 eta = eta.isoformat()
             task['eta'] = eta
+        if schedule is not None:
+            task['schedule'] = schedule
         return task
 
     def add_task(self, task=None, taskqueue='default', **kwargs):
