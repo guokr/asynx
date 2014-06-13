@@ -9,7 +9,7 @@ from pytz import utc
 from tzlocal import get_localzone
 from celery import Celery
 
-from asynx_server import apis
+from asynxd import apis
 
 
 class ApisTestCase(TestCase):

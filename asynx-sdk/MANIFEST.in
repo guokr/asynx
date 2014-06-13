@@ -1,2 +1,0 @@
-include asynx_sdk/version.txt
-recursive-include tests *.py

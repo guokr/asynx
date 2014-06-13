@@ -4,7 +4,7 @@ from unittest import TestCase
 from datetime import datetime, timedelta
 
 from pytz import utc
-from asynx_sdk import TaskQueueClient
+from asynx import TaskQueueClient
 
 
 class TQClientTestCase(TestCase):

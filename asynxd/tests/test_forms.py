@@ -4,8 +4,9 @@ import pytz
 from datetime import datetime
 
 from unittest import TestCase
-from asynx_server import forms
 from voluptuous import MultipleInvalid
+
+from asynxd import forms
 
 
 class FormsTestCase(TestCase):

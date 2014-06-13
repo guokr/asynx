@@ -38,12 +38,12 @@ class TaskQueueClient(object):
 
     def __init__(self, base_url, appname,
                  timeout=5.0, task_timeout=120.0):
-        """taskqueue client for asynx-server
+        """taskqueue client for asynxd
 
         Parameters:
-            - base_url: string, base URL of asynx-server's RESTful API
+            - base_url: string, base URL of asynxd's RESTful API
             - appname:  string, application's name
-            - timeout:  float, timeout for requestions to asynx-server
+            - timeout:  float, timeout for requestions to asynxd
             - task_timeout: float, timeout for task running
 
         """

@@ -16,7 +16,7 @@ except ImportError:
 py_version = sys.version_info
 
 with open(os.path.join(os.getcwd(),
-                       'asynx_sdk/version.txt')) as fp:
+                       'asynx/version.txt')) as fp:
     VERSION = fp.read().strip()
 
 
@@ -41,7 +41,7 @@ else:
 
 
 setup_params = dict(
-    name="asynx-sdk",
+    name="asynx",
     version=VERSION,
     url="https://github.com/guokr/asynx",
     author='Guokr',
@@ -49,7 +49,7 @@ setup_params = dict(
     description=('Python SDK for an open source, distributed, and '
                  'web / HTTP oriented taskqueue & scheduler service '
                  'inspired by Google App Engine'),
-    packages=['asynx_sdk'],
+    packages=['asynx'],
     install_requires=install_requires,
     tests_require=reqs('test-requirements.txt'),
     include_package_data=True,

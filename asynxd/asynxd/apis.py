@@ -17,7 +17,7 @@ from asynx_core.taskqueue import (Task as _Task,
 
 from . import forms, engines
 
-app = Flask('asynx_server')
+app = Flask('asynxd')
 app.config.from_pyfile('application.cfg')
 redisconn = engines.make_redis(app)
 celeryapp = engines.make_celery(app)

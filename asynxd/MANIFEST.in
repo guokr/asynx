@@ -1,0 +1,3 @@
+include asynxd/version.txt
+include asynxd/application.cfg
+recursive-include tests *.py

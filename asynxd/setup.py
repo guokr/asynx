@@ -16,7 +16,7 @@ except ImportError:
 py_version = sys.version_info
 
 with open(os.path.join(os.getcwd(),
-                       'asynx_server/version.txt')) as fp:
+                       'asynxd/version.txt')) as fp:
     VERSION = fp.read().strip()
 
 
@@ -40,7 +40,7 @@ else:
     install_requires = reqs('requirements.txt')
 
 setup_params = dict(
-    name="asynx-server",
+    name="asynxd",
     version=VERSION,
     url="https://github.com/guokr/asynx",
     author='Guokr',
@@ -48,7 +48,7 @@ setup_params = dict(
     description=('RESTful server side of an open source, distributed, '
                  'and web / HTTP oriented taskqueue & scheduler service '
                  'inspired by Google App Engine'),
-    packages=['asynx_server'],
+    packages=['asynxd'],
     install_requires=install_requires,
     tests_require=reqs('test-requirements.txt'),
     include_package_data=True,
@@ -65,7 +65,7 @@ setup_params = dict(
         'Programming Language :: Python :: 2.7',
         'Topic :: Internet :: WWW/HTTP :: WSGI :: Application'],
     entry_points={
-        'console_scripts': 'asynx = asynx_server.manage:main'
+        'console_scripts': 'asynxd = asynxd.manage:main'
     },
     test_suite="nose.collector",
     zip_safe=True)

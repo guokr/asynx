@@ -24,7 +24,7 @@ def _celery():
     pidfile = os.path.join(logdir, 'celery.pid')
     g = namedtuple('celeryconf', 'APP ENABLE_BEAT LOGLEVEL '
                    'DEBUG_LOGLEVEL POOL LOGFILE PIDFILE')(
-                       'asynx_server:celeryapp',
+                       'asynxd:celeryapp',
                        conf['CELERY_ENABLE_BEAT'],
                        conf['CELERY_DAEMON_LOGLEVEL'],
                        conf['CELERY_DEBUG_LOGLEVEL'],
@@ -44,7 +44,7 @@ def _gunicorn():
     pidfile = os.path.join(logdir, 'gunicorn.pid')
     g = namedtuple('gunicornconf', 'APP BIND WORKERS LOGLEVEL '
                    'DEBUG_LOGLEVEL LOGFILE PIDFILE')(
-                       'asynx_server:app',
+                       'asynxd:app',
                        conf['BIND'],
                        conf['WORKERS'],
                        conf['DAEMON_LOGLEVEL'],
@@ -161,7 +161,7 @@ celery_manager.command(celery_log)
 def start():
     """Starting the restful server"""
     g = _gunicorn()
-    print('Starting asynx-server:', end=' ')
+    print('Starting asynxd:', end=' ')
     sh.gunicorn(g.APP,
                 '--log-level', g.LOGLEVEL,
                 '--log-file', g.LOGFILE,
@@ -181,7 +181,7 @@ def stop():
         print('pidfile "{0}" is not found'.format(g.PIDFILE),
               file=sys.stderr)
         return 1
-    print('Stopping asynx-server:', end=' ')
+    print('Stopping asynxd:', end=' ')
     with open(g.PIDFILE) as fp:
         sh.kill(fp.read().strip(), **_shkw)
     say_ok()
@@ -202,7 +202,7 @@ def reload():
         print('pidfile "{0}" is not found'.format(g.PIDFILE),
               file=sys.stderr)
         return 1
-    print('Reloading asynx-server:', end=' ')
+    print('Reloading asynxd:', end=' ')
     with open(g.PIDFILE) as fp:
         sh.kill('-HUP', fp.read().strip(), **_shkw)
     say_ok()

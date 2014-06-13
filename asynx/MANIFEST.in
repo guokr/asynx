@@ -1,0 +1,2 @@
+include asynx/version.txt
+recursive-include tests *.py
