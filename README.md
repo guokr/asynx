@@ -30,7 +30,6 @@ $ redis-server -v
 You are recommended to install `gevent>=1.0` to increase Celery's performance, `simplejson>=3.5` to solve [issue 11489](http://bugs.python.org/issue11489).
 
 ```bash
-$ sudo apt-get install libev
 # in your python environment (for example: virtualenv)
 $ pip install gevent simplejson
 ```

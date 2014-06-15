@@ -59,6 +59,7 @@ error_mapping = {
     200101: (422, 'Validation failure'),
     207202: (404, 'Task not found'),
     207203: (409, 'Task already exists'),
+    107250: (500, 'Internal server error'),
 }
 
 
@@ -69,6 +70,11 @@ def _error_handler(error_code, error_detail):
         error_code=error_code,
         error_desc=error_desc,
         error_detail=error_detail), status
+
+
+@app.errorhandler(500)
+def internal_server_error_handler(e):
+    return _error_handler(107250, str(e))
 
 
 @app.errorhandler(JSONParseError)
@@ -114,7 +120,13 @@ def validate(schema, data=None, datatype=None):
     return schema(data)
 
 
-@app.route('/app/<appname>/taskqueues/<taskqueue>/tasks', methods=['GET'])
+@app.route('/status', methods=['GET'])
+def status():
+    redisconn.ping()
+    return 'true', 200, {'Content-Type': 'application/json'}
+
+
+@app.route('/apps/<appname>/taskqueues/<taskqueue>/tasks', methods=['GET'])
 def list_tasks(appname, taskqueue):
     """Lists all non deleted tasks in a taskqueue
 
@@ -122,7 +134,7 @@ def list_tasks(appname, taskqueue):
     -------
 
     ```
-    GET http://asynx.host/app/:appname/taskqueues/:taskqueue/tasks
+    GET http://asynx.host/apps/:appname/taskqueues/:taskqueue/tasks
     ```
 
     Parameters:
@@ -165,7 +177,7 @@ def list_tasks(appname, taskqueue):
     return jsonify(items=items, total=total)
 
 
-@app.route('/app/<appname>/taskqueues/<taskqueue>/tasks', methods=['POST'])
+@app.route('/apps/<appname>/taskqueues/<taskqueue>/tasks', methods=['POST'])
 def insert_task(appname, taskqueue):
     """Inserts a task into a taskqueue
 
@@ -173,7 +185,7 @@ def insert_task(appname, taskqueue):
     -------
 
     ```
-    POST http://asynx.host/app/:appname/taskqueues/:taskqueue/tasks
+    POST http://asynx.host/apps/:appname/taskqueues/:taskqueue/tasks
     ```
 
     Parameters:
@@ -270,7 +282,7 @@ def insert_task(appname, taskqueue):
     return jsonify(x), 201
 
 
-@app.route('/app/<appname>/taskqueues/<taskqueue>/tasks/<identifier>',
+@app.route('/apps/<appname>/taskqueues/<taskqueue>/tasks/<identifier>',
            methods=['GET'])
 def get_task(appname, taskqueue, identifier):
     """Gets identified task in a taskqueue
@@ -279,7 +291,7 @@ def get_task(appname, taskqueue, identifier):
     -------
 
     ```
-    GET http://asynx.host/app/:appname/taskqueues/:taskqueue/tasks/:identifier
+    GET http://asynx.host/apps/:appname/taskqueues/:taskqueue/tasks/:identifier
     ```
 
     Parameters:
@@ -316,7 +328,7 @@ def get_task(appname, taskqueue, identifier):
     return jsonify(task)
 
 
-@app.route('/app/<appname>/taskqueues/<taskqueue>/tasks/<identifier>',
+@app.route('/apps/<appname>/taskqueues/<taskqueue>/tasks/<identifier>',
            methods=['DELETE'])
 def delete_task(appname, taskqueue, identifier):
     """Deletes a task from a taskqueue
@@ -326,7 +338,7 @@ def delete_task(appname, taskqueue, identifier):
 
     ```
     DELETE \
-        http://asynx.host/app/:appname/taskqueues/:taskqueue/tasks/:identifier
+        http://asynx.host/apps/:appname/taskqueues/:taskqueue/tasks/:identifier
     ```
 
     Parameters:

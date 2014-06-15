@@ -68,14 +68,14 @@ class TaskQueueClient(object):
                 'Response content is not in JSON format')
 
     def _rest_url(self, taskqueue, suffix=''):
-        path = 'app/{0}/taskqueues/{1}/tasks'.format(self.appname, taskqueue)
+        path = 'apps/{0}/taskqueues/{1}/tasks'.format(self.appname, taskqueue)
         path += suffix
         return urlunparse(self._base_url[:2] + (path, '', '', ''))
 
     def list_tasks(self, taskqueue='default', offset=0, limit=50):
         """Listing all non deleted tasks in a taskqueue
 
-        GET http://asynx.host/app/:appname/taskqueues/:taskqueue/tasks
+        GET http://asynx.host/apps/:appname/taskqueues/:taskqueue/tasks
 
         Parameters:
             - taskqueue: string, taskqueue's name
@@ -203,7 +203,7 @@ class TaskQueueClient(object):
     def add_task(self, task=None, taskqueue='default', **kwargs):
         """Inserts a task into a taskqueue
 
-        POST http://asynx.host/app/:appname/taskqueues/:taskqueue/tasks
+        POST http://asynx.host/apps/:appname/taskqueues/:taskqueue/tasks
 
         Parameters:
             - task:      (optional) dictionary created by self.task()
@@ -236,7 +236,7 @@ class TaskQueueClient(object):
                  uuid=None, taskqueue='default'):
         """Gets identified task in a taskqueue
 
-        GET http://asynx.host/app/:appname/ \
+        GET http://asynx.host/apps/:appname/ \
             taskqueues/:taskqueue/tasks/:identifier
 
         Parameters:
@@ -267,7 +267,7 @@ class TaskQueueClient(object):
                     uuid=None, taskqueue='default'):
         """Deletes identified task in a taskqueue
 
-        DELETE http://asynx.host/app/:appname/ \
+        DELETE http://asynx.host/apps/:appname/ \
                taskqueues/:taskqueue/tasks/:identifier
 
         Parameters:

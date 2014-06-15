@@ -1,2 +1,3 @@
+include *requirements.txt
 include asynx_core/version.txt
 recursive-include tests *.py

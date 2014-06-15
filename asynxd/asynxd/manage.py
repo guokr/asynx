@@ -28,7 +28,7 @@ def _celery():
                        conf['CELERY_ENABLE_BEAT'],
                        conf['CELERY_DAEMON_LOGLEVEL'],
                        conf['CELERY_DEBUG_LOGLEVEL'],
-                       conf.get('CELERYD_POOL', False),
+                       conf.get('CELERY_USE_POOL', False),
                        logfile, pidfile)
     try:
         os.makedirs(logdir)
@@ -158,18 +158,19 @@ celery_manager.command(celery_log)
 
 
 @manager.command
-def start():
+def start(bind=None):
     """Starting the restful server"""
     g = _gunicorn()
     print('Starting asynxd:', end=' ')
-    sh.gunicorn(g.APP,
-                '--log-level', g.LOGLEVEL,
-                '--log-file', g.LOGFILE,
-                daemon=True,
-                bind=g.BIND,
-                workers=g.WORKERS,
-                pid=g.PIDFILE,
-                **_shkw)
+    p = sh.gunicorn(g.APP,
+                    '--log-level', g.LOGLEVEL,
+                    '--log-file', g.LOGFILE,
+                    daemon=True,
+                    bind=bind or g.BIND,
+                    workers=g.WORKERS,
+                    pid=g.PIDFILE,
+                    _bg=True, **_shkw)
+    safe_wait(p)
     say_ok()
 
 
@@ -188,10 +189,10 @@ def stop():
 
 
 @manager.command
-def restart():
+def restart(bind=None):
     """Restarting the restful server"""
     stop()
-    start()
+    start(bind)
 
 
 @manager.command

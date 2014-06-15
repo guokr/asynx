@@ -36,6 +36,7 @@ class TQClientTestCase(TestCase):
         kw['cname'] = 'test the crontab'
         task = tqc.add_task(**kw)
         self.assertEqual(task['schedule'], '*/10 * * * *')
+        tqc.delete_task(task['id'])
 
     def test_list_tasks(self):
         tqc = TaskQueueClient('http://localhost:17969', 'test')
